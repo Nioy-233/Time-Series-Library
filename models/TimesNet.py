@@ -70,15 +70,24 @@ class TimesBlock(nn.Module):
 
 class Model(nn.Module):
     """
-    Paper link: https://openreview.net/pdf?id=ju_Uqw384Oq
+    这是一个基于TimesNet的模型类，用于处理多种时间序列任务，包括长期预测、短期预测、插值、异常检测和分类。
+
+    参数:
+    - configs: 配置对象，包含模型的各种超参数和任务类型。
     """
 
     def __init__(self, configs):
+        """
+        初始化模型，根据配置设置模型的结构和参数。
+
+        参数:
+        - configs: 配置对象，包含模型的各种超参数和任务类型。
+        """
         super(Model, self).__init__()
         self.configs = configs
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
-        # 这个参数貌似没用
+        # 该参数在代码中未被使用，可能是为了未来的扩展或特定任务保留。
         self.label_len = configs.label_len
         self.pred_len = configs.pred_len
         self.model = nn.ModuleList([TimesBlock(configs)
@@ -102,6 +111,24 @@ class Model(nn.Module):
                 configs.d_model * configs.seq_len, configs.num_class)
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        """
+        执行时间序列的预测任务。
+
+        参数:
+        - x_enc: 编码器的输入数据。
+        - x_mark_enc: 编码器的时间标记数据。
+        - x_dec: 解码器的输入数据（在代码中未被使用，可能是为了未来的扩展或特定任务保留）。
+        - x_mark_dec: 解码器的时间标记数据（在代码中未被使用，可能是为了未来的扩展或特定任务保留）。
+
+        输入:
+        - x_enc: [B, T, C]，其中B是批次大小，T是时间步长，C是特征维度。
+        - x_mark_enc: [B, T, D]，其中D是时间标记的维度。
+        - x_dec: [B, T, C]。
+        - x_mark_dec: [B, T, D]。
+
+        输出:
+        - dec_out: [B, L, D]，其中L是预测的时间步长。
+        """
         # Normalization from Non-stationary Transformer
         means = x_enc.mean(1, keepdim=True).detach()
         x_enc = x_enc - means
@@ -129,6 +156,26 @@ class Model(nn.Module):
         return dec_out
 
     def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
+        """
+        执行时间序列的插值任务。
+
+        参数:
+        - x_enc: 编码器的输入数据。
+        - x_mark_enc: 编码器的时间标记数据。
+        - x_dec: 解码器的输入数据（在代码中未被使用，可能是为了未来的扩展或特定任务保留）。
+        - x_mark_dec: 解码器的时间标记数据（在代码中未被使用，可能是为了未来的扩展或特定任务保留）。
+        - mask: 用于指示缺失值的掩码。
+
+        输入:
+        - x_enc: [B, T, C]，其中B是批次大小，T是时间步长，C是特征维度。
+        - x_mark_enc: [B, T, D]，其中D是时间标记的维度。
+        - x_dec: [B, T, C]。
+        - x_mark_dec: [B, T, D]。
+        - mask: [B, T]，指示哪些位置是缺失的。
+
+        输出:
+        - dec_out: [B, L, D]，其中L是预测的时间步长。
+        """
         # Normalization from Non-stationary Transformer
         means = torch.sum(x_enc, dim=1) / torch.sum(mask == 1, dim=1)
         means = means.unsqueeze(1).detach()
@@ -157,6 +204,18 @@ class Model(nn.Module):
         return dec_out
 
     def anomaly_detection(self, x_enc):
+        """
+        执行时间序列的异常检测任务。
+
+        参数:
+        - x_enc: 编码器的输入数据。
+
+        输入:
+        - x_enc: [B, T, C]，其中B是批次大小，T是时间步长，C是特征维度。
+
+        输出:
+        - dec_out: [B, L, D]，其中L是预测的时间步长。
+        """
         # Normalization from Non-stationary Transformer
         means = x_enc.mean(1, keepdim=True).detach()
         x_enc = x_enc - means
@@ -182,6 +241,20 @@ class Model(nn.Module):
         return dec_out
 
     def classification(self, x_enc, x_mark_enc):
+        """
+        执行时间序列的分类任务。
+
+        参数:
+        - x_enc: 编码器的输入数据。
+        - x_mark_enc: 编码器的时间标记数据。
+
+        输入:
+        - x_enc: [B, T, C]，其中B是批次大小，T是时间步长，C是特征维度。
+        - x_mark_enc: [B, T, D]，其中D是时间标记的维度。
+
+        输出:
+        - output: [B, N]，其中N是类别数量。
+        """
         # embedding
         enc_out = self.enc_embedding(x_enc, None)  # [B,T,C]
         # TimesNet
@@ -200,6 +273,26 @@ class Model(nn.Module):
         return output
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+        """
+        根据任务类型调用相应的函数进行前向传播。
+
+        参数:
+        - x_enc: 编码器的输入数据。
+        - x_mark_enc: 编码器的时间标记数据。
+        - x_dec: 解码器的输入数据（在某些任务中未被使用，可能是为了未来的扩展或特定任务保留）。
+        - x_mark_dec: 解码器的时间标记数据（在某些任务中未被使用，可能是为了未来的扩展或特定任务保留）。
+        - mask: 用于指示缺失值的掩码（仅在插值任务中使用）。
+
+        输入:
+        - x_enc: [B, T, C]，其中B是批次大小，T是时间步长，C是特征维度。
+        - x_mark_enc: [B, T, D]，其中D是时间标记的维度。
+        - x_dec: [B, T, C]。
+        - x_mark_dec: [B, T, D]。
+        - mask: [B, T]（仅在插值任务中使用）。
+
+        输出:
+        - dec_out: 根据任务类型返回相应的输出。
+        """
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
             dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
