@@ -78,6 +78,7 @@ class Model(nn.Module):
         self.configs = configs
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
+        # 这个参数貌似没用
         self.label_len = configs.label_len
         self.pred_len = configs.pred_len
         self.model = nn.ModuleList([TimesBlock(configs)
