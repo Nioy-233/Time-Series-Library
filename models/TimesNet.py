@@ -20,11 +20,24 @@ def FFT_for_Period(x, k=2):
 
 class TimesBlock(nn.Module):
     def __init__(self, configs):
+        """
+        TimesBlock 模块，用于捕捉时间序列中的周期性特征，并通过参数高效的设计实现时间序列的建模。
+
+        Configs中在TimesNet中已经指定了以下参数:
+        - configs.seq_len: 输入序列的长度
+        - configs.pred_len: 输出序列的长度
+        - configs.d_model: Embedding的嵌入维度
+
+        TimesBlock需要额外指定以下参数:
+        - configs.top_k: 选取的周期数量
+        - configs.d_ff: Inception模块的输出维度
+        - configs.num_kernels: Inception模块中使用不同尺度卷积核的数量
+        """
         super(TimesBlock, self).__init__()
         self.seq_len = configs.seq_len
         self.pred_len = configs.pred_len
         self.k = configs.top_k
-        # parameter-efficient design
+        # 参数高效的设计：使用 Inception 块和 GELU 激活函数
         self.conv = nn.Sequential(
             Inception_Block_V1(configs.d_model, configs.d_ff,
                                num_kernels=configs.num_kernels),
@@ -34,13 +47,25 @@ class TimesBlock(nn.Module):
         )
 
     def forward(self, x):
-        B, T, N = x.size()
+        """
+        前向传播函数，捕捉时间序列中的周期性特征并进行建模。
+
+        参数:
+        - x: 输入数据，形状为 [B, T, N]，其中 B 是批次大小，T 是时间步长，N 是特征维度。
+
+        输入:
+        - x: [B, T, N]，输入数据。
+
+        输出:
+        - 经过周期特征提取和建模后的输出，形状为 [B, T, N]。
+        """
+        B, T, N = x.size()  # 获取输入数据的形状
         period_list, period_weight = FFT_for_Period(x, self.k)
 
         res = []
         for i in range(self.k):
-            period = period_list[i]
-            # padding
+            period = period_list[i]  # 获取当前周期
+            # 填充以保证序列长度是周期的整数倍
             if (self.seq_len + self.pred_len) % period != 0:
                 length = (
                                  ((self.seq_len + self.pred_len) // period) + 1) * period
@@ -49,45 +74,60 @@ class TimesBlock(nn.Module):
             else:
                 length = (self.seq_len + self.pred_len)
                 out = x
-            # reshape
+            # 将序列重塑为 2D 形式以进行卷积操作
             out = out.reshape(B, length // period, period,
                               N).permute(0, 3, 1, 2).contiguous()
-            # 2D conv: from 1d Variation to 2d Variation
+            # 通过 2D 卷积捕捉周期特征
             out = self.conv(out)
-            # reshape back
+            # 将序列重塑回原始形式
             out = out.permute(0, 2, 3, 1).reshape(B, -1, N)
-            res.append(out[:, :(self.seq_len + self.pred_len), :])
+            res.append(out[:, :(self.seq_len + self.pred_len), :])  # 截取有效部分
+
+        # 堆叠所有周期的结果
         res = torch.stack(res, dim=-1)
-        # adaptive aggregation
+        # 自适应聚合：根据周期权重加权求和
         period_weight = F.softmax(period_weight, dim=1)
         period_weight = period_weight.unsqueeze(
             1).unsqueeze(1).repeat(1, T, N, 1)
         res = torch.sum(res * period_weight, -1)
-        # residual connection
+        # 残差连接
         res = res + x
         return res
 
 
 class Model(nn.Module):
-    """
-    这是一个基于TimesNet的模型类，用于处理多种时间序列任务，包括长期预测、短期预测、插值、异常检测和分类。
-
-    参数:
-    - configs: 配置对象，包含模型的各种超参数和任务类型。
-    """
-
     def __init__(self, configs):
         """
-        初始化模型，根据配置设置模型的结构和参数。
+        这是一个基于TimesNet的模型类，用于处理多种时间序列任务，包括长期预测、短期预测、插值、异常检测和分类。
 
-        参数:
-        - configs: 配置对象，包含模型的各种超参数和任务类型。
+        Configs中需要指定以下常规参数:
+        - configs.task_name: 任务名称
+        - configs.seq_len: 输入序列的长度
+        - configs.pred_len: 输出序列的长度
+        - configs.e_layers: TimesBlock的层数
+        - configs.c_out: TimesNet模型的输出序列维度
+        - configs.label_len: 只有Autoformer会用到这个参数
+            - 即使用不到也要指定，这是一个冗余参数
+
+        Configs中需要指定以下Embedding参数:
+        - configs.enc_in: 嵌入层数据的输入维度，也是TimesNet模型的输入序列维度
+        - configs.d_model: 嵌入层数据的输出维度，该维度也将作为每层TimesBlock的输入及输出维度
+        - configs.embed和configs.freq: 嵌入层的mark嵌入方式和频率
+            - 后续会固定读取这两个参数，因此即使没有mark也要指定这两个参数
+        - configs.dropout: 嵌入层的Dropout比例，用于防止过拟合
+
+        如果是分类任务，则需要额外指定以下参数:
+        - configs.num_class: 分类数量
+
+        用到了TimesBlock模块，该模块需要额外指定以下参数:
+        - configs.top_k: 选取的FFT周期数量
+        - configs.d_ff: Inception模块的输出维度
+        - configs.num_kernels: Inception模块中使用不同尺度卷积核的数量
         """
         super(Model, self).__init__()
         self.configs = configs
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
-        # 该参数在代码中未被使用，可能是为了未来的扩展或特定任务保留。
         self.label_len = configs.label_len
         self.pred_len = configs.pred_len
         self.model = nn.ModuleList([TimesBlock(configs)
